@@ -109,3 +109,13 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+.remote-cursor-flag {
+  border-left: 2px solid;
+  border-color: inherit;
+  position: relative;
+}
+
+.remote-cursor {
+  background-color: rgba(255, 255, 0, 0.1);
+}
