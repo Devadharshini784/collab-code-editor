@@ -10,35 +10,73 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: '*', // we'll lock this down later for production
+    origin: '*',
     methods: ['GET', 'POST']
   }
 });
 
-// Keep track of which room has which code (in-memory for now, no DB yet)
-const roomCodeMap = {};
+const roomCodeMap = {};   // { roomId: code }
+const roomUsersMap = {};  // { roomId: { socketId: { name, color } } }
+
+const COLORS = ['#FF5733', '#33A1FF', '#33FF57', '#F033FF', '#FFD133', '#33FFF6'];
+
+function getRandomColor() {
+  return COLORS[Math.floor(Math.random() * COLORS.length)];
+}
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // When a user joins a room
-  socket.on('join-room', (roomId) => {
+  socket.on('join-room', ({ roomId, userName }) => {
     socket.join(roomId);
-    console.log(`User ${socket.id} joined room ${roomId}`);
+    socket.data.roomId = roomId;
 
-    // If this room already has code, send it to the new user immediately
+    if (!roomUsersMap[roomId]) {
+      roomUsersMap[roomId] = {};
+    }
+
+    const userInfo = {
+      name: userName || `User-${socket.id.slice(0, 4)}`,
+      color: getRandomColor()
+    };
+    roomUsersMap[roomId][socket.id] = userInfo;
+
+    // Send existing code to the new user
     if (roomCodeMap[roomId]) {
       socket.emit('load-code', roomCodeMap[roomId]);
     }
+
+    // Send the full user list to everyone in the room (including the new user)
+    io.to(roomId).emit('user-list', roomUsersMap[roomId]);
   });
 
-  // When a user types code
   socket.on('code-change', ({ roomId, code }) => {
-    roomCodeMap[roomId] = code; // save latest code for the room
-    socket.to(roomId).emit('code-update', code); // send to everyone else in room, NOT back to sender
+    roomCodeMap[roomId] = code;
+    socket.to(roomId).emit('code-update', code);
+  });
+
+  // New: cursor position broadcasting
+  socket.on('cursor-move', ({ roomId, position }) => {
+    const userInfo = roomUsersMap[roomId]?.[socket.id];
+    if (!userInfo) return;
+
+    socket.to(roomId).emit('cursor-update', {
+      socketId: socket.id,
+      position,
+      name: userInfo.name,
+      color: userInfo.color
+    });
   });
 
   socket.on('disconnect', () => {
+    const roomId = socket.data.roomId;
+    if (roomId && roomUsersMap[roomId]) {
+      delete roomUsersMap[roomId][socket.id];
+      io.to(roomId).emit('user-list', roomUsersMap[roomId]);
+
+      // let others know this user's cursor should be removed
+      socket.to(roomId).emit('user-left', socket.id);
+    }
     console.log('User disconnected:', socket.id);
   });
 });
